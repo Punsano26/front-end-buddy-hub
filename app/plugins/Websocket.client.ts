@@ -20,6 +20,9 @@ import { shouldRefreshToken, tryRefreshToken } from '~/utils/authRefresh'
 
 type TWebSocketEvent
   = 'users:list'
+    | 'users:paginate:response'
+    | 'user:presence'
+    | 'session:revoked'
     | 'new_message'
     | 'message_read'
     | 'message_updated'
@@ -233,9 +236,9 @@ export default defineNuxtPlugin((): any => {
     }
 
     const accessToken = authStore.userToken.accessToken
-    const wsUrl = accessToken
-      ? `${import.meta.env.VITE_ENV_BASE_WS_API}?token=${accessToken}`
-      : `${import.meta.env.VITE_ENV_BASE_WS_API}?id=${userId}`
+    if (!accessToken) return
+
+    const wsUrl = `${import.meta.env.VITE_ENV_BASE_WS_API}?token=${accessToken}`
 
     ws = new WebSocket(wsUrl) as WebSocket & { __manualClose?: boolean }
 
@@ -284,6 +287,58 @@ export default defineNuxtPlugin((): any => {
 
           const banStore = useBanStore()
           void banStore.triggerForceLogout(banInfo)
+          break
+        }
+
+        case 'session:revoked': {
+          const revokeData = isRecord(payload.data) ? payload.data as { type?: 'current' | 'other' } : undefined
+          const revokeType = revokeData?.type ?? 'current'
+
+          if (revokeType === 'current') {
+            if (ws) {
+              ws.__manualClose = true
+              ws.close()
+            }
+            const banStore = useBanStore()
+            void banStore.triggerForceLogout('เซสชันถูกเพิกถอน')
+          } else {
+            // Other sessions were revoked; current session is still valid
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('ws:session_revoked', { detail: revokeData }))
+            }
+          }
+          break
+        }
+
+        case 'user:presence': {
+          if (!isRecord(payload.data)) break
+          const uid = toNumber(payload.data.userId)
+          const online = payload.data.isOnline === true
+
+          if (uid !== null) {
+            userStore.updateUserPresence(uid, online)
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('ws:user_presence', {
+                detail: { userId: uid, isOnline: online }
+              }))
+            }
+          }
+          break
+        }
+
+        case 'users:paginate:response': {
+          const data = isRecord(payload.data) ? payload.data : null
+          const incoming = Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(payload.data)
+              ? payload.data
+              : []
+          userStore.setUsers(incoming)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('ws:users_paginate_response', {
+              detail: payload.data
+            }))
+          }
           break
         }
 

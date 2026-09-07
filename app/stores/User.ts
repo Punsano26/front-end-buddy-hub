@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { genderEnum } from '~/models/enums/User.enum'
 import type { IFindOneUserDetailData } from '~/models/response/UserRes.model'
 
-interface IUser {
+export interface IUser {
   id: number
   username: string
   nickname?: string | null
@@ -12,6 +12,7 @@ interface IUser {
   dateOfBirth?: string
   isOnline?: boolean
   isBanned?: boolean
+  lastOnlineAt?: string | null
 }
 
 export const useUserStore = defineStore('User', {
@@ -23,6 +24,27 @@ export const useUserStore = defineStore('User', {
   actions: {
     setUsers (users: unknown): void {
       this.users = Array.isArray(users) ? users as IUser[] : []
+    },
+
+    updateUserPresence (userId: number, isOnline: boolean): void {
+      const idx = this.users.findIndex((u: IUser): boolean => u.id === userId)
+      if (idx !== -1) {
+        const user = this.users[idx]
+        if (user) {
+          this.users[idx] = {
+            ...user,
+            isOnline,
+            lastOnlineAt: isOnline ? null : new Date().toISOString()
+          }
+        }
+      }
+      if (this.userDetails[userId]) {
+        this.userDetails[userId] = {
+          ...this.userDetails[userId],
+          isOnline,
+          lastOnlineAt: isOnline ? null : new Date().toISOString()
+        }
+      }
     },
 
     setUserDetail (detail: unknown): void {

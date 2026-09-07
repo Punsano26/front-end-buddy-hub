@@ -78,27 +78,17 @@ export const useBanStore = defineStore('Ban', (): IBanStore => {
    * 4. Redirect user to /login or /auth/login.
    */
   async function triggerForceLogout (info?: IBanEventData | string): Promise<void> {
-    if (typeof info === 'string') {
-      showBanAlert(info)
-    } else if (info) {
-      setBanInfo(info)
-    } else if (!banInfo.value) {
-      showBanAlert('บัญชีของคุณถูกระงับการใช้งาน')
-    }
+    const isBan = typeof info !== 'string'
 
-    // 1. Close WebSocket connection immediately
-    try {
-      const { $ws } = useNuxtApp() as any
-      const socket = $ws?.()
-      if (socket) {
-        (socket as WebSocket & { __manualClose?: boolean }).__manualClose = true
-        socket.close()
+    if (isBan) {
+      if (info) {
+        setBanInfo(info)
+      } else if (!banInfo.value) {
+        showBanAlert('บัญชีของคุณถูกระงับการใช้งาน')
       }
-    } catch (err: any) {
-      console.error('[BanStore] Error closing socket:', err)
     }
 
-    // 2. Clear all stored authentication credentials
+    // 1. Clear all stored authentication credentials (authStore.logout closes socket)
     try {
       clearPersistedAuth()
       const authStore = useAuthStore()
@@ -112,11 +102,14 @@ export const useBanStore = defineStore('Ban', (): IBanStore => {
       console.error('[BanStore] Error clearing storage:', err)
     }
 
-    // 3. Redirect to login or notice page
+    // 2. Redirect to login or notice page
     try {
       const router = useNuxtApp().$router
       if (router) {
-        const queryParams: Record<string, string> = { banned: 'true' }
+        const queryParams: Record<string, string> = isBan
+          ? { banned: 'true' }
+          : { revoked: 'true' }
+
         if (typeof info === 'string') {
           queryParams.reason = info
         } else if (info?.reason) {

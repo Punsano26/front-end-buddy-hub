@@ -31,12 +31,13 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted, onUnmounted, ref } from 'vue'
 import InputSearch from '~/components/input/InputSearch.vue'
 import type { IFindAllFriendList } from '~/models/response/FriendRes.model'
 import type { IFriendProvider } from '~/resource/provider/Friend.provider'
 import FriendProvider from '~/resource/provider/Friend.provider'
 
-definePageMeta({ layout: "navbar" });
+definePageMeta({ layout: 'navbar' })
 
 const itemsUserFriends = ref<IFindAllFriendList[]>([])
 const { search, pagination, extractPagination } = usePagination()
@@ -47,7 +48,7 @@ async function useFetch (): Promise<void> {
   const response = await friendService.findAllFriendPaginate({
     page: pagination.value.page,
     limit: pagination.value.limit,
-    search: search.value,
+    search: search.value
   })
 
   itemsUserFriends.value = Array.isArray(response?.data) ? response.data : []
@@ -58,8 +59,29 @@ function fetch (): void {
   $handleLoading(useFetch)
 }
 
+const handlePresence = (e: Event): void => {
+  const detail = (e as CustomEvent<{ userId: number, isOnline: boolean }>).detail
+  if (!detail) return
+  const friend = itemsUserFriends.value.find((f: IFindAllFriendList): boolean => f.id === detail.userId)
+  if (friend) {
+    friend.isOnline = detail.isOnline
+    if (!detail.isOnline) {
+      friend.lastOnlineAt = new Date().toISOString()
+    }
+  }
+}
+
 onMounted((): void => {
   fetch()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ws:user_presence', handlePresence)
+  }
+})
+
+onUnmounted((): void => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('ws:user_presence', handlePresence)
+  }
 })
 
 function onSearch (): void {

@@ -56,7 +56,7 @@ export const useAuthStore = defineStore('Auth', (): IAuthStore => {
       const { $ws, $wsConnect } = useNuxtApp() as any
       const socket = $ws?.()
 
-      if (socket) {
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         (socket as WebSocket & { __manualClose?: boolean }).__manualClose = true
         socket.close()
       }
@@ -82,7 +82,7 @@ export const useAuthStore = defineStore('Auth', (): IAuthStore => {
 
     const socket = $ws?.()
 
-    if (socket) {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       (socket as WebSocket & { __manualClose?: boolean }).__manualClose = true
       socket.close()
     }
