@@ -153,14 +153,15 @@
 <script setup lang="ts">
 import { useToast } from 'primevue/usetoast'
 import { CoinGrantedEvent } from '~/models/enums/Coin.enum'
-import { UploadCategoryEnum } from '~/models/enums/Upload.enum'
 import type { ISendCoinsToAnotherUserPayload } from '~/models/request/WalletReq.model'
 import type { ICreateMessageData } from '~/models/response/ChatRes.model'
-import type { IUploadResultData, IUploadUrlResultData } from '~/models/response/UploadRes.model'
-import type { IUploadProvider } from '~/resource/provider/Upload.provider'
-import UploadProvider from '~/resource/provider/Upload.provider'
 import UserProvider, { type IUserProvider } from '~/resource/provider/User.provider'
 import WalletProvider, { type IWalletProvider } from '~/resource/provider/Wallet.provider'
+
+export interface ISendMediaMessagePayload {
+  file: File
+  previewUrl: string
+}
 
 interface IProps {
   modelValue?: string
@@ -173,10 +174,9 @@ const { $handleLoading, $ws } = useNuxtApp()
 const emit = defineEmits<{
   'update:modelValue': [message: string]
   'createMessage': [message: string]
-  'createMediaMessage': [message: string | ICreateMessageData]
+  'createMediaMessage': [payload: ISendMediaMessagePayload | string | ICreateMessageData]
   'cancelEdit': []
 }>()
-const UploadService: IUploadProvider = new UploadProvider()
 const WalletService: IWalletProvider = new WalletProvider()
 const UserService: IUserProvider = new UserProvider()
 const props = withDefaults(defineProps<IProps>(), {
@@ -196,7 +196,6 @@ const messageModel = computed({
   }
 })
 
-const ws = typeof $ws === 'function' ? $ws : useWebSocket()
 let typingDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let lastTypingSent = false
 
@@ -221,7 +220,7 @@ watch(messageModel, (val: string): void => {
 })
 
 function sendTypingEvent (isTyping: boolean): void {
-  const socket = ws?.()
+  const socket = typeof $ws === 'function' ? $ws() : null
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (!props.partnerId) return
   socket.send(JSON.stringify({
@@ -297,20 +296,12 @@ function handleSend (): void {
   if (!trimmedMessage && !file) return
 
   if (file) {
-    $handleLoading(async (): Promise<void> => {
-      const result = await handleUpload(file, UploadCategoryEnum.MESSAGE)
-      if (isUploadUrlResultData(result)) {
-        emit('createMediaMessage', result.url)
-      } else if (isCreateMessageData(result)) {
-        emit('createMediaMessage', result)
-      } else {
-        throw new Error('Upload response missing url or message')
-      }
-      clearImageSelection()
-      if (trimmedMessage) {
-        emit('createMessage', trimmedMessage)
-      }
-    })
+    const preview = imagePreview.value
+    emit('createMediaMessage', { file, previewUrl: preview })
+    clearImageSelection()
+    if (trimmedMessage) {
+      emit('createMessage', trimmedMessage)
+    }
     return
   }
 
@@ -326,6 +317,34 @@ function onImageChange (event: Event): void {
   if (!allowMedia.value) return
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
+
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
+  const MAX_GIF_SIZE = 10 * 1024 * 1024 // 10MB
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+
+  if (!allowedTypes.includes(file.type)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'ประเภทไฟล์ไม่ถูกต้อง',
+      detail: 'รองรับเฉพาะไฟล์รูปภาพ (JPEG, PNG, WEBP, GIF)',
+      life: 3000
+    })
+    if (imageInput.value) imageInput.value.value = ''
+    return
+  }
+
+  const maxSize = file.type === 'image/gif' ? MAX_GIF_SIZE : MAX_IMAGE_SIZE
+  if (file.size > maxSize) {
+    toast.add({
+      severity: 'warn',
+      summary: 'ขนาดไฟล์เกินกำหนด',
+      detail: file.type === 'image/gif' ? 'ขนาดไฟล์ GIF ต้องไม่เกิน 10MB' : 'ขนาดไฟล์รูปภาพต้องไม่เกิน 5MB',
+      life: 3000
+    })
+    if (imageInput.value) imageInput.value.value = ''
+    return
+  }
+
   selectedFile.value = file
   if (imagePreview.value) {
     URL.revokeObjectURL(imagePreview.value)
@@ -342,26 +361,6 @@ function clearImageSelection (): void {
   if (imageInput.value) {
     imageInput.value.value = ''
   }
-}
-
-function isUploadUrlResultData (data: IUploadResultData): data is IUploadUrlResultData {
-  return typeof (data as IUploadUrlResultData).url === 'string'
-}
-
-function isCreateMessageData (data: IUploadResultData): data is ICreateMessageData {
-  return typeof (data as ICreateMessageData).id === 'number'
-    && typeof (data as ICreateMessageData).messageType === 'string'
-    && typeof (data as ICreateMessageData).messageText === 'string'
-}
-
-async function handleUpload (file: File, category: UploadCategoryEnum): Promise<IUploadResultData> {
-  const response = await UploadService.onUpload({
-    files: file,
-    category,
-    partnerId: props.partnerId
-  })
-  const result = response.data
-  return result
 }
 function handleCancelEdit (): void {
   sendTypingEvent(false)
