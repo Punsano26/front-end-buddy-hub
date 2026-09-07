@@ -89,6 +89,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import 'dayjs/locale/th'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -129,10 +130,29 @@ const labelMenu = computed((): IItems[] => {
   ]
 })
 
+const handlePresence = (e: Event): void => {
+  const detail = (e as CustomEvent<{ userId: number, isOnline: boolean }>).detail
+  if (detail && detail.userId === id.value && items.value[0]) {
+    items.value[0] = {
+      ...items.value[0],
+      isOnline: detail.isOnline,
+      lastOnlineAt: detail.isOnline ? null : new Date().toISOString()
+    }
+  }
+}
 
 // ─── Lifecycle Hooks ──────────────────────────────────────────────────────────
 onMounted((): void => {
   fetch()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ws:user_presence', handlePresence)
+  }
+})
+
+onUnmounted((): void => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('ws:user_presence', handlePresence)
+  }
 })
 
 // ─── Fetch Data ────────────────────────────────────────────────────────────────

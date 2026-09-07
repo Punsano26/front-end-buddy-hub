@@ -15,6 +15,18 @@
       </div>
     </div>
 
+    <div
+      v-else-if="route.query.revoked === 'true'"
+      class="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-sm flex flex-col gap-1">
+      <div class="font-bold flex items-center gap-2">
+        <span>ℹ️</span>
+        <span>เซสชันถูกเพิกถอน</span>
+      </div>
+      <div v-if="route.query.reason">
+        {{ route.query.reason }}
+      </div>
+    </div>
+
     <InputLabelField
       v-model="form.account"
       :disabled="!!route.query.account"
