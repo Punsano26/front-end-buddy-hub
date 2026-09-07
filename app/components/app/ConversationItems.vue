@@ -27,7 +27,12 @@
             </p>
 
             <p class="text-sm text-gray-500 line-clamp-1">
-              {{ props.conversation.lastMessageText }}
+              <span v-if="props.conversation.lastMessageType?.toUpperCase() === 'MEDIA'">
+                📷 {{ props.conversation.lastMessageText || 'รูปภาพ' }}
+              </span>
+              <span v-else>
+                {{ props.conversation.lastMessageText }}
+              </span>
             </p>
           </div>
 

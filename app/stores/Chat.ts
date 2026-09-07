@@ -116,9 +116,12 @@ export const useChatStore = defineStore('Chat', {
 
       if (!Number.isFinite(otherUserId) || otherUserId <= 0) return
 
+      const isMedia = message.messageType?.toUpperCase() === 'MEDIA'
+      const lastMessage = message.messageText || (isMedia ? '📷 รูปภาพ' : '')
+
       this.pushConversationActivity({
         otherUserId,
-        lastMessage: message.messageText,
+        lastMessage,
         createdAt: message.createdAt,
         messageType: message.messageType
       })

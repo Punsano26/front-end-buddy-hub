@@ -5,6 +5,11 @@ import type { ICreateMessagePayload } from '~/models/request/ChatReq.model'
 import type { ICreateMessageData, ICreateMessageResponse, IGetMessageLimitResponse } from '~/models/response/ChatRes.model'
 import type { IMessageResponse, TErrorResponse } from '~/models/response/Response.model'
 import ChatProvider, { type IChatProvider } from '~/resource/provider/Chat.provider'
+import { chatEnum } from '~/models/enums/Chat.enum'
+import { AttachmentTypeEnum } from '~/models/enums/Attachment.enum'
+import { UploadCategoryEnum } from '~/models/enums/Upload.enum'
+import UploadProvider, { type IUploadProvider } from '~/resource/provider/Upload.provider'
+import type { ICreateUploadResponse } from '~/models/response/UploadRes.model'
 
 export type IChatMessageItem = ICreateMessageData & {
   isSending?: boolean
@@ -20,6 +25,14 @@ interface ISubmitMessageOptions {
   currentUserId: number
   isEditingMessage?: boolean
   editingMessageId?: number | null
+  onMessagesUpdated?: () => Promise<void> | void
+}
+
+export interface ISubmitMediaMessageOptions {
+  file: File
+  previewUrl: string
+  receiverId: number
+  currentUserId: number
   onMessagesUpdated?: () => Promise<void> | void
 }
 
@@ -54,6 +67,18 @@ export const useChatRoomStore = defineStore('ChatRoom', {
     isSubmittingMessage: false,
     sendErrors: {}
   }),
+
+  getters: {
+    orderedMessages: (state: IChatRoomState): IChatMessageItem[] => {
+      return [...state.messages].sort(
+        (a: IChatMessageItem, b: IChatMessageItem): number => {
+          const aTime = Number(new Date(a.createdAt))
+          const bTime = Number(new Date(b.createdAt))
+          return aTime - bTime
+        }
+      )
+    }
+  },
 
   actions: {
     setMessages (messages: ICreateMessageData[]): void {
@@ -301,6 +326,154 @@ export const useChatRoomStore = defineStore('ChatRoom', {
         return false
       } finally {
         this.isSubmittingMessage = false
+      }
+    },
+
+    async sendOptimisticMediaMessage (options: ISubmitMediaMessageOptions): Promise<boolean> {
+      const uploadService: IUploadProvider = new UploadProvider()
+      const chatStore = useChatStore()
+      const { $handleLoading } = useNuxtApp()
+      const silentLoadingUnit = ref(false)
+
+      const now = new Date().toISOString()
+      const tempMessageId = -(Date.now() + Math.floor(Math.random() * 1000))
+      const optimisticMessage: IChatMessageItem = {
+        id: tempMessageId,
+        senderId: options.currentUserId,
+        receiverId: options.receiverId,
+        messageType: chatEnum.MEDIA,
+        messageText: '',
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: '',
+        attachments: [
+          {
+            id: tempMessageId,
+            attachmentType: AttachmentTypeEnum.IMAGE,
+            url: options.previewUrl,
+            name: options.file.name,
+            size: options.file.size,
+            mimeType: options.file.type
+          }
+        ],
+        isRead: false,
+        isSending: true
+      }
+
+      this.upsertMessage(optimisticMessage)
+      await options.onMessagesUpdated?.()
+
+      try {
+        const uploadRequest = (): Promise<ICreateUploadResponse> => uploadService.onUpload({
+          category: UploadCategoryEnum.MESSAGE,
+          files: options.file,
+          partnerId: options.receiverId
+        })
+
+        const response = await $handleLoading<ICreateUploadResponse>(uploadRequest, {
+          loadingUnit: silentLoadingUnit
+        })
+
+        const messageData = response?.data as ICreateMessageData | undefined
+        if (!messageData || typeof messageData.id !== 'number') {
+          this.removeMessageById(tempMessageId)
+          return false
+        }
+
+        const isMessageAlreadySynced = this.messages.some(
+          (item: IChatMessageItem): boolean => item.id === messageData.id
+        )
+
+        if (isMessageAlreadySynced) {
+          this.removeMessageById(tempMessageId)
+        } else {
+          this.replaceMessageById(tempMessageId, messageData)
+        }
+
+        chatStore.pushConversationActivityFromMessage(messageData, options.currentUserId)
+        await options.onMessagesUpdated?.()
+        return true
+      } catch (error: any) {
+        this.removeMessageById(tempMessageId)
+        throw error
+      }
+    },
+
+    async submitMediaMessage (options: ISubmitMediaMessageOptions): Promise<boolean> {
+      if (this.isSubmittingMessage) return false
+
+      this.isSubmittingMessage = true
+      this.clearSendError(options.receiverId)
+
+      try {
+        const canSend = await this.checkMessageLimit(options.receiverId)
+        if (!canSend) return false
+
+        return await this.sendOptimisticMediaMessage(options)
+      } catch (error: any) {
+        const errorMsg = error?.response?.data?.message || error?.message || 'เกิดข้อผิดพลาดระหว่างส่งรูปภาพ'
+        this.setSendError(options.receiverId, errorMsg)
+        return false
+      } finally {
+        this.isSubmittingMessage = false
+      }
+    },
+
+    async deleteMessage (messageId: number, receiverId: number): Promise<boolean> {
+      const chatService: IChatProvider = new ChatProvider()
+      const { $handleLoading } = useNuxtApp()
+      const silentLoadingUnit = ref(false)
+      let requestError: TErrorResponse | undefined
+
+      if (messageId <= 0) return false
+
+      try {
+        const deleteRequest = (): Promise<any> => chatService.deleteMessage(messageId)
+        const response = await $handleLoading<any>(deleteRequest, {
+          loadingUnit: silentLoadingUnit,
+          errorCallBack: (error?: TErrorResponse): void => {
+            requestError = error
+          }
+        })
+
+        if (!response) {
+          this.setSendError(receiverId, normalizeErrorMessage(requestError))
+          return false
+        }
+
+        this.removeMessageById(messageId)
+        return true
+      } catch (error: any) {
+        const errorMsg = error?.response?.data?.message || error?.message || 'เกิดข้อผิดพลาดระหว่างลบข้อความ'
+        this.setSendError(receiverId, errorMsg)
+        return false
+      }
+    },
+
+    async readConversationMessages (partnerId: number, currentUserId: number): Promise<void> {
+      if (partnerId <= 0 || currentUserId <= 0) return
+
+      const chatService: IChatProvider = new ChatProvider()
+      const chatStore = useChatStore()
+
+      const unreadMessageIds = this.messages
+        .filter(
+          (message: IChatMessageItem): boolean =>
+            message.senderId === partnerId
+            && message.receiverId === currentUserId
+            && !message.isRead
+        )
+        .map((message: IChatMessageItem): number => message.id)
+
+      if (unreadMessageIds.length === 0) return
+
+      try {
+        await chatService.markMessagesAsRead({ friendId: partnerId })
+        this.markMessagesAsRead(unreadMessageIds)
+        chatStore.removeUnreadMessageIds(unreadMessageIds, currentUserId)
+        chatStore.setConversationUnreadCount(partnerId, 0, currentUserId)
+      } catch (err: any) {
+        console.warn('[ChatRoom] Failed to mark messages as read:', err)
       }
     }
   }

@@ -14,7 +14,7 @@
       >
         <div class="flex w-full flex-col gap-3">
           <div
-            v-for="chat in orderedChatData"
+            v-for="chat in orderedMessages"
             :key="chat.id"
             class="group flex w-full"
             :class="isOwnMessage(chat) ? 'justify-end' : 'justify-start'"
@@ -54,7 +54,8 @@
                       :src="getMediaUrl(chat)"
                       alt="Image message"
                       class="max-w-full sm:max-w-[260px] rounded-lg border border-white/20 dark:border-slate-800/80 object-cover shadow-sm transition hover:scale-[1.015] duration-200 cursor-pointer"
-                      loading="lazy">
+                      loading="lazy"
+                      @click.stop="openImagePreview(getMediaUrl(chat))">
                     <p v-else class="text-xs font-semibold text-slate-500 dark:text-slate-400">
                       Image unavailable
                     </p>
@@ -142,6 +143,33 @@
         @createMediaMessage="sendMediaMessage"
       />
     </div>
+
+    <!-- Full Image Preview Modal -->
+    <Dialog
+      v-model:visible="isPreviewImageOpen"
+      modal
+      dismissable-mask
+      :show-header="false"
+      :pt="{
+        root: { class: '!bg-transparent !border-0 !shadow-none !max-w-[90vw] !max-h-[90vh] !p-0 !overflow-hidden' },
+        content: { class: '!bg-transparent !p-0 !flex !items-center !justify-center relative' }
+      }"
+    >
+      <div class="relative max-h-[85vh] max-w-[90vw] overflow-hidden rounded-2xl bg-black/80 backdrop-blur-md p-2 flex items-center justify-center">
+        <img
+          :src="previewImageUrl"
+          alt="Full preview"
+          class="max-h-[80vh] max-w-[85vw] object-contain rounded-xl shadow-2xl"
+        >
+        <button
+          class="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-slate-900/80 text-white hover:bg-slate-800 transition"
+          type="button"
+          @click="isPreviewImageOpen = false"
+        >
+          <i class="pi pi-times text-sm" />
+        </button>
+      </div>
+    </Dialog>
   </div>
 </template>
 
@@ -153,7 +181,7 @@ import { CoinGrantedEvent } from '~/models/enums/Coin.enum'
 import type { IItems } from '~/models/Global.model'
 import type { ICreateMessagePayload } from '~/models/request/ChatReq.model'
 import type { ICreateMessageData } from '~/models/response/ChatRes.model'
-import type { TErrorResponse } from '~/models/response/Response.model'
+import type { ISendMediaMessagePayload } from '~/components/DirectMessageChatRoom.vue'
 import ChatProvider, { type IChatProvider } from '~/resource/provider/Chat.provider'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '~/stores/Auth'
@@ -161,7 +189,7 @@ import { useChatStore } from '~/stores/Chat'
 import { useCallStore } from '~/stores/Call'
 import { type IChatMessageItem, useChatRoomStore } from '~/stores/ChatRoom'
 
-const { $handleLoading } = useNuxtApp();
+const { $handleLoading, $ws } = useNuxtApp();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const callStore = useCallStore();
@@ -171,10 +199,19 @@ const chatService: IChatProvider = new ChatProvider();
 const dayjs = useDayjs();
 const imageBaseUrl = import.meta.env.VITE_ENV_BASE_FILE_URL + '/';
 const { pagination, extractPagination } = usePagination();
-const { messages: chatData } = storeToRefs(chatRoomStore);
+const { orderedMessages } = storeToRefs(chatRoomStore);
 const sendError = computed((): string => chatRoomStore.getSendError(id.value));
 const id = computed(() => Number(useRoute().params.id));
 definePageMeta({ layout: "chat" });
+
+const isPreviewImageOpen = ref(false);
+const previewImageUrl = ref('');
+
+function openImagePreview(url: string): void {
+  if (!url) return;
+  previewImageUrl.value = url;
+  isPreviewImageOpen.value = true;
+}
 
 const isPartnerTyping = ref(false);
 let typingClearTimer: ReturnType<typeof setTimeout> | null = null;
@@ -208,16 +245,6 @@ const chatScrollContainer = ref<HTMLElement | null>(null);
 const isCompactScreen = ref(false);
 const activeMenuMessageId = ref<number | null>(null);
 let screenQuery: MediaQueryList | null = null;
-const orderedChatData = computed((): IChatMessageItem[] => {
-  return [...chatData.value].sort(
-    (a: IChatMessageItem, b: IChatMessageItem): number => {
-      const aTime = Number(new Date(a.createdAt));
-      const bTime = Number(new Date(b.createdAt));
-      return aTime - bTime;
-    },
-  );
-});
-
 async function scrollToBottom(): Promise<void> {
   await nextTick();
   if (!chatScrollContainer.value) return;
@@ -247,64 +274,23 @@ function cancelEditMessage(): void {
   editingMessageId.value = null;
   form.value.messageText = "";
 }
+
 async function confirmDeleteMessage(
   message: ICreateMessageData,
 ): Promise<void> {
-  try {
-    await chatService.deleteMessage(message.id);
+  const isSuccess = await chatRoomStore.deleteMessage(message.id, id.value);
 
-    chatData.value = chatData.value.filter(
-      (item: ICreateMessageData): boolean => item.id !== message.id,
-    );
-
-    if (editingMessageId.value === message.id) {
-      cancelEditMessage();
-    }
-  } catch (error: TErrorResponse) {
-    const errorMessage = error?.message;
-    chatRoomStore.setSendError(id.value, errorMessage || '');
+  if (isSuccess && editingMessageId.value === message.id) {
+    cancelEditMessage();
   }
 }
 
 async function markMessagesAsRead(): Promise<void> {
   if (isMarkingRead.value) return;
 
-  const currentUserId = authStore.user.id;
-  const targetUserId = id.value;
-
-  if (currentUserId <= 0 || targetUserId <= 0) return;
-
-  const unreadMessageIds = chatData.value
-    .filter(
-      (message: ICreateMessageData): boolean =>
-        message.senderId === targetUserId &&
-        message.receiverId === currentUserId &&
-        !message.isRead,
-    )
-    .map((message: ICreateMessageData): number => message.id);
-
-  if (unreadMessageIds.length === 0) return;
-
   isMarkingRead.value = true;
-
   try {
-    await chatService.markMessagesAsRead({ friendId: targetUserId });
-
-    chatData.value = chatData.value.map(
-      (message: ICreateMessageData): ICreateMessageData => {
-        if (
-          message.senderId === targetUserId &&
-          message.receiverId === currentUserId
-        ) {
-          return { ...message, isRead: true };
-        }
-
-        return message;
-      },
-    );
-
-    chatStore.removeUnreadMessageIds(unreadMessageIds, currentUserId);
-    chatStore.setConversationUnreadCount(targetUserId, 0, currentUserId);
+    await chatRoomStore.readConversationMessages(id.value, authStore.user.id);
   } finally {
     isMarkingRead.value = false;
   }
@@ -330,7 +316,7 @@ function isMessageMenuVisible(messageId: number): boolean {
 }
 
 function isMediaMessage(message: ICreateMessageData): boolean {
-  return message.messageType === chatEnum.MEDIA;
+  return message.messageType?.toUpperCase() === chatEnum.MEDIA;
 }
 
 function isCallMessage(message: ICreateMessageData): boolean {
@@ -391,7 +377,7 @@ function clickCall(): void {
 
 function resolveMediaUrl(value: string): string {
   if (!value) return '';
-  if (value.startsWith('http://') || value.startsWith('https://')) {
+  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('blob:') || value.startsWith('data:')) {
     return value;
   }
   return imageBaseUrl + value;
@@ -399,7 +385,7 @@ function resolveMediaUrl(value: string): string {
 
 function getMediaUrl(message: ICreateMessageData): string {
   const attachment = message.attachments?.find(
-    (item): boolean => item.attachmentType === AttachmentTypeEnum.IMAGE,
+    (item): boolean => item.attachmentType?.toUpperCase() === AttachmentTypeEnum.IMAGE,
   ) || message.attachments?.[0];
 
   if (attachment?.url) {
@@ -470,9 +456,7 @@ const { removeSocketListener, startSocketSync, stopSocketSync } =
       chatRoomStore.markMessagesAsRead(messageIds);
     },
     onMessageDeleted: (messageId: number): void => {
-      chatData.value = chatData.value.filter(
-        (message: ICreateMessageData): boolean => message.id !== messageId,
-      );
+      chatRoomStore.removeMessageById(messageId);
 
       if (editingMessageId.value === messageId) {
         cancelEditMessage();
@@ -481,14 +465,7 @@ const { removeSocketListener, startSocketSync, stopSocketSync } =
     onMessageEdited: (updatedMessage: ICreateMessageData): void => {
       if (!isCurrentConversationMessage(updatedMessage)) return;
 
-      chatData.value = chatData.value.map(
-        (message: ICreateMessageData): ICreateMessageData => {
-          if (message.id === updatedMessage.id) {
-            return { ...message, messageText: updatedMessage.messageText };
-          }
-          return message;
-        },
-      );
+      chatRoomStore.upsertMessage(updatedMessage);
     },
   });
 
@@ -547,16 +524,39 @@ async function sendMessage(messageText: string, messageType: chatEnum = form.val
   form.value.messageText = "";
 }
 
-async function sendMediaMessage(message: string | ICreateMessageData): Promise<void> {
-  if (typeof message !== 'string') {
-    upsertMessage(message);
-    chatStore.pushConversationActivityFromMessage(message, authStore.user.id);
+async function sendMediaMessage(payload: ISendMediaMessagePayload | string | ICreateMessageData): Promise<void> {
+  if (typeof payload === 'object' && 'file' in payload) {
+    const isSuccess = await chatRoomStore.submitMediaMessage({
+      file: payload.file,
+      previewUrl: payload.previewUrl,
+      receiverId: id.value,
+      currentUserId: authStore.user.id,
+      onMessagesUpdated: scrollToBottom,
+    });
+
+    if (!isSuccess) {
+      const errorMsg = chatRoomStore.getSendError(id.value);
+      if (errorMsg.includes('ถูกระงับ')) {
+        toast.add({
+          severity: 'error',
+          summary: 'ผิดพลาด',
+          detail: 'บัญชีของคุณถูกระงับ ไม่สามารถส่งข้อความได้',
+          life: 3000
+        });
+      }
+    }
+    return;
+  }
+
+  if (typeof payload !== 'string') {
+    upsertMessage(payload);
+    chatStore.pushConversationActivityFromMessage(payload, authStore.user.id);
     await scrollToBottom();
     return;
   }
 
   const isSuccess = await chatRoomStore.submitMessage({
-    messageText: message,
+    messageText: payload,
     receiverId: id.value,
     messageType: chatEnum.MEDIA,
     currentUserId: authStore.user.id,
@@ -571,7 +571,7 @@ async function sendMediaMessage(message: string | ICreateMessageData): Promise<v
         summary: 'ผิดพลาด',
         detail: 'บัญชีของคุณถูกระงับ ไม่สามารถส่งข้อความได้',
         life: 3000
-      })
+      });
     }
   }
 }
@@ -643,7 +643,7 @@ watch(
 );
 
 watch(
-  (): number => orderedChatData.value.length,
+  (): number => orderedMessages.value.length,
   (): void => {
     void scrollToBottom();
   },
