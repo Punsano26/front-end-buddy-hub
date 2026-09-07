@@ -68,6 +68,18 @@ export const useChatRoomStore = defineStore('ChatRoom', {
     sendErrors: {}
   }),
 
+  getters: {
+    orderedMessages: (state: IChatRoomState): IChatMessageItem[] => {
+      return [...state.messages].sort(
+        (a: IChatMessageItem, b: IChatMessageItem): number => {
+          const aTime = Number(new Date(a.createdAt))
+          const bTime = Number(new Date(b.createdAt))
+          return aTime - bTime
+        }
+      )
+    }
+  },
+
   actions: {
     setMessages (messages: ICreateMessageData[]): void {
       this.messages = messages
@@ -404,6 +416,64 @@ export const useChatRoomStore = defineStore('ChatRoom', {
         return false
       } finally {
         this.isSubmittingMessage = false
+      }
+    },
+
+    async deleteMessage (messageId: number, receiverId: number): Promise<boolean> {
+      const chatService: IChatProvider = new ChatProvider()
+      const { $handleLoading } = useNuxtApp()
+      const silentLoadingUnit = ref(false)
+      let requestError: TErrorResponse | undefined
+
+      if (messageId <= 0) return false
+
+      try {
+        const deleteRequest = (): Promise<any> => chatService.deleteMessage(messageId)
+        const response = await $handleLoading<any>(deleteRequest, {
+          loadingUnit: silentLoadingUnit,
+          errorCallBack: (error?: TErrorResponse): void => {
+            requestError = error
+          }
+        })
+
+        if (!response) {
+          this.setSendError(receiverId, normalizeErrorMessage(requestError))
+          return false
+        }
+
+        this.removeMessageById(messageId)
+        return true
+      } catch (error: any) {
+        const errorMsg = error?.response?.data?.message || error?.message || 'เกิดข้อผิดพลาดระหว่างลบข้อความ'
+        this.setSendError(receiverId, errorMsg)
+        return false
+      }
+    },
+
+    async readConversationMessages (partnerId: number, currentUserId: number): Promise<void> {
+      if (partnerId <= 0 || currentUserId <= 0) return
+
+      const chatService: IChatProvider = new ChatProvider()
+      const chatStore = useChatStore()
+
+      const unreadMessageIds = this.messages
+        .filter(
+          (message: IChatMessageItem): boolean =>
+            message.senderId === partnerId
+            && message.receiverId === currentUserId
+            && !message.isRead
+        )
+        .map((message: IChatMessageItem): number => message.id)
+
+      if (unreadMessageIds.length === 0) return
+
+      try {
+        await chatService.markMessagesAsRead({ friendId: partnerId })
+        this.markMessagesAsRead(unreadMessageIds)
+        chatStore.removeUnreadMessageIds(unreadMessageIds, currentUserId)
+        chatStore.setConversationUnreadCount(partnerId, 0, currentUserId)
+      } catch (err: any) {
+        console.warn('[ChatRoom] Failed to mark messages as read:', err)
       }
     }
   }

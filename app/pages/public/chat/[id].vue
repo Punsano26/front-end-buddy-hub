@@ -14,7 +14,7 @@
       >
         <div class="flex w-full flex-col gap-3">
           <div
-            v-for="chat in orderedChatData"
+            v-for="chat in orderedMessages"
             :key="chat.id"
             class="group flex w-full"
             :class="isOwnMessage(chat) ? 'justify-end' : 'justify-start'"
@@ -181,7 +181,6 @@ import { CoinGrantedEvent } from '~/models/enums/Coin.enum'
 import type { IItems } from '~/models/Global.model'
 import type { ICreateMessagePayload } from '~/models/request/ChatReq.model'
 import type { ICreateMessageData } from '~/models/response/ChatRes.model'
-import type { TErrorResponse } from '~/models/response/Response.model'
 import type { ISendMediaMessagePayload } from '~/components/DirectMessageChatRoom.vue'
 import ChatProvider, { type IChatProvider } from '~/resource/provider/Chat.provider'
 import { useToast } from 'primevue/usetoast'
@@ -200,7 +199,7 @@ const chatService: IChatProvider = new ChatProvider();
 const dayjs = useDayjs();
 const imageBaseUrl = import.meta.env.VITE_ENV_BASE_FILE_URL + '/';
 const { pagination, extractPagination } = usePagination();
-const { messages: chatData } = storeToRefs(chatRoomStore);
+const { orderedMessages } = storeToRefs(chatRoomStore);
 const sendError = computed((): string => chatRoomStore.getSendError(id.value));
 const id = computed(() => Number(useRoute().params.id));
 definePageMeta({ layout: "chat" });
@@ -246,16 +245,6 @@ const chatScrollContainer = ref<HTMLElement | null>(null);
 const isCompactScreen = ref(false);
 const activeMenuMessageId = ref<number | null>(null);
 let screenQuery: MediaQueryList | null = null;
-const orderedChatData = computed((): IChatMessageItem[] => {
-  return [...chatData.value].sort(
-    (a: IChatMessageItem, b: IChatMessageItem): number => {
-      const aTime = Number(new Date(a.createdAt));
-      const bTime = Number(new Date(b.createdAt));
-      return aTime - bTime;
-    },
-  );
-});
-
 async function scrollToBottom(): Promise<void> {
   await nextTick();
   if (!chatScrollContainer.value) return;
@@ -285,64 +274,23 @@ function cancelEditMessage(): void {
   editingMessageId.value = null;
   form.value.messageText = "";
 }
+
 async function confirmDeleteMessage(
   message: ICreateMessageData,
 ): Promise<void> {
-  try {
-    await chatService.deleteMessage(message.id);
+  const isSuccess = await chatRoomStore.deleteMessage(message.id, id.value);
 
-    chatData.value = chatData.value.filter(
-      (item: ICreateMessageData): boolean => item.id !== message.id,
-    );
-
-    if (editingMessageId.value === message.id) {
-      cancelEditMessage();
-    }
-  } catch (error: TErrorResponse) {
-    const errorMessage = error?.message;
-    chatRoomStore.setSendError(id.value, errorMessage || '');
+  if (isSuccess && editingMessageId.value === message.id) {
+    cancelEditMessage();
   }
 }
 
 async function markMessagesAsRead(): Promise<void> {
   if (isMarkingRead.value) return;
 
-  const currentUserId = authStore.user.id;
-  const targetUserId = id.value;
-
-  if (currentUserId <= 0 || targetUserId <= 0) return;
-
-  const unreadMessageIds = chatData.value
-    .filter(
-      (message: ICreateMessageData): boolean =>
-        message.senderId === targetUserId &&
-        message.receiverId === currentUserId &&
-        !message.isRead,
-    )
-    .map((message: ICreateMessageData): number => message.id);
-
-  if (unreadMessageIds.length === 0) return;
-
   isMarkingRead.value = true;
-
   try {
-    await chatService.markMessagesAsRead({ friendId: targetUserId });
-
-    chatData.value = chatData.value.map(
-      (message: ICreateMessageData): ICreateMessageData => {
-        if (
-          message.senderId === targetUserId &&
-          message.receiverId === currentUserId
-        ) {
-          return { ...message, isRead: true };
-        }
-
-        return message;
-      },
-    );
-
-    chatStore.removeUnreadMessageIds(unreadMessageIds, currentUserId);
-    chatStore.setConversationUnreadCount(targetUserId, 0, currentUserId);
+    await chatRoomStore.readConversationMessages(id.value, authStore.user.id);
   } finally {
     isMarkingRead.value = false;
   }
@@ -508,9 +456,7 @@ const { removeSocketListener, startSocketSync, stopSocketSync } =
       chatRoomStore.markMessagesAsRead(messageIds);
     },
     onMessageDeleted: (messageId: number): void => {
-      chatData.value = chatData.value.filter(
-        (message: ICreateMessageData): boolean => message.id !== messageId,
-      );
+      chatRoomStore.removeMessageById(messageId);
 
       if (editingMessageId.value === messageId) {
         cancelEditMessage();
@@ -519,14 +465,7 @@ const { removeSocketListener, startSocketSync, stopSocketSync } =
     onMessageEdited: (updatedMessage: ICreateMessageData): void => {
       if (!isCurrentConversationMessage(updatedMessage)) return;
 
-      chatData.value = chatData.value.map(
-        (message: ICreateMessageData): ICreateMessageData => {
-          if (message.id === updatedMessage.id) {
-            return { ...message, messageText: updatedMessage.messageText };
-          }
-          return message;
-        },
-      );
+      chatRoomStore.upsertMessage(updatedMessage);
     },
   });
 
@@ -704,7 +643,7 @@ watch(
 );
 
 watch(
-  (): number => orderedChatData.value.length,
+  (): number => orderedMessages.value.length,
   (): void => {
     void scrollToBottom();
   },
