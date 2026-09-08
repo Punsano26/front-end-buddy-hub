@@ -112,7 +112,8 @@ async function onLogin (): Promise<void> {
     password: form.value.password
   }
   const response = await authService.login(payload)
-  authStore.userLogin(response.data, response.accessToken, response.refreshToken, Number(response.tokenExpiresIn))
+  const expireAt = response.tokenExpireAt ? Number(response.tokenExpireAt) : null
+  authStore.userLogin(response.data, response.accessToken, response.refreshToken, Number(response.tokenExpiresIn), expireAt)
 
   router.push({ name: 'public-home' })
 }
