@@ -76,6 +76,7 @@ import { useAuthStore } from '~/stores/Auth'
 import { useUserStore } from '~/stores/User'
 import Card from '~/volt/Card.vue'
 
+const { $handleLoading } = useNuxtApp()
 const authStore = useAuthStore()
 const userStore = useUserStore()
 
@@ -98,18 +99,29 @@ const onlineCount = computed((): number => {
   return mergedItems.value.filter((item: IUserList): boolean => item.isOnline === true).length
 })
 
-const visible = ref(false);
-const userService: IUserProvider = new UserProvider();
-const { $handleLoading } = useNuxtApp();
-const { search, pagination, extractPagination } = usePagination();
-definePageMeta({ layout: "navbar" });
-const items = ref<IUserList[]>([]);
-const details = ref<IFindOneUserDetailData>();
-const sortByGender = ref<genderEnum | null>(null);
-const minAge = ref<number>();
-const maxAge = ref<number>();
-const banStatus = ref<BanStatusFilterEnum | null>(null);
-const isLoading = ref<boolean>(true);
+const visible = ref(false)
+const userService: IUserProvider = new UserProvider()
+const { search, pagination, extractPagination } = usePagination()
+definePageMeta({ layout: "navbar" })
+const items = ref<IUserList[]>([])
+const details = ref<IFindOneUserDetailData>()
+const sortByGender = ref<genderEnum | null>(null)
+const minAge = ref<number>()
+const maxAge = ref<number>()
+const banStatus = ref<BanStatusFilterEnum | null>(null)
+const isLoading = ref<boolean>(true)
+
+const handlePresence = (e: Event): void => {
+  const detail = (e as CustomEvent<{ userId: number, isOnline: boolean }>).detail
+  if (!detail || typeof detail.userId !== 'number') return
+  const item = items.value.find((u: IUserList): boolean => u.id === detail.userId)
+  if (item) {
+    item.isOnline = detail.isOnline
+    if (!detail.isOnline) {
+      item.lastOnlineAt = new Date().toISOString()
+    }
+  }
+}
 
 async function useFetchApi(): Promise<void> {
   const response = await userService.findAllUsersPaginate({
@@ -120,36 +132,45 @@ async function useFetchApi(): Promise<void> {
     minAge: minAge.value,
     maxAge: maxAge.value,
     banStatus: banStatus.value ?? undefined
-  });
+  })
 
-  items.value = Array.isArray(response?.data) ? response.data : [];
-  pagination.value = extractPagination(response);
+  items.value = Array.isArray(response?.data) ? response.data : []
+  pagination.value = extractPagination(response)
 }
 
 async function useFetchDetails(userId: number): Promise<void> {
-  const response = await userService.findOneUserById(userId);
-  details.value = response?.data;
+  const response = await userService.findOneUserById(userId)
+  details.value = response?.data
 }
 
 function onClickUser(userId: number): void {
   $handleLoading(async (): Promise<void> => {
-    await useFetchDetails(userId);
-    if (!details.value) return;
-    visible.value = true;
-  });
+    await useFetchDetails(userId)
+    if (!details.value) return
+    visible.value = true
+  })
 }
 
 function fetch(): void {
-  $handleLoading(useFetchApi, { loadingUnit: isLoading });
+  $handleLoading(useFetchApi, { loadingUnit: isLoading })
 }
 
 onMounted((): void => {
-  fetch();
-});
+  fetch()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ws:user_presence', handlePresence)
+  }
+})
+
+onUnmounted((): void => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('ws:user_presence', handlePresence)
+  }
+})
 
 function onSearch(): void {
-  pagination.value.page = 1;
-  fetch();
+  pagination.value.page = 1
+  fetch()
 }
 
 function onFilterChange(): void {

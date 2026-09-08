@@ -76,11 +76,11 @@ interface IUserPresence {
 
 definePageMeta({ layout: "navbar" })
 
+const { $handleLoading, $ws } = useNuxtApp()
 const matchService: IMatchProvider = new MatchProvider()
 const userService = new UserProvider()
 const toast = useToast()
 const router = useRouter()
-const { $ws } = useNuxtApp()
 const authStore = useAuthStore()
 const userStore = useUserStore()
 
@@ -90,7 +90,7 @@ const payload = ref<IJoinTheRandomMatchQueuePayload>({
   maxAge: 26
 })
 
-// --- Real-time online count (via WebSocket, same pattern as index.vue) ---
+// --- Real-time online count (via WebSocket) ---
 const safeUsers = computed<IUserPresence[]>((): IUserPresence[] => {
   return Array.isArray(userStore.users) ? userStore.users : []
 })
@@ -114,7 +114,7 @@ let socketMessageListener: ((event: MessageEvent) => void) | null = null
 let syncTimer: ReturnType<typeof setInterval> | null = null
 
 function requestUsersViaSocket (): void {
-  const socket = $ws()
+  const socket = typeof $ws === 'function' ? $ws() : null
   if (!socket || socket.readyState !== WebSocket.OPEN) return
 
   socket.send(JSON.stringify({
@@ -126,39 +126,83 @@ function requestUsersViaSocket (): void {
   }))
 }
 
-function setupRealtimeOnlineCount (): void {
-  const socket = $ws()
+function handlePresenceEvent (e: Event): void {
+  const detail = (e as CustomEvent<{ userId: number, isOnline: boolean }>).detail
+  if (detail && typeof detail.userId === 'number') {
+    userStore.updateUserPresence(detail.userId, detail.isOnline)
+  }
+}
+
+function handleReconnected (): void {
+  attachSocketMessageListener()
+  requestUsersViaSocket()
+}
+
+function attachSocketMessageListener (): void {
+  const socket = typeof $ws === 'function' ? $ws() : null
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   if (socketMessageListener) return
 
   socketMessageListener = (event: MessageEvent): void => {
     try {
       const payload = JSON.parse(event.data)
+
+      if (payload?.event === 'user:presence') {
+        const uid = typeof payload.data?.userId === 'number'
+          ? payload.data.userId
+          : Number(payload.data?.userId)
+        const online = payload.data?.isOnline === true
+        if (Number.isFinite(uid)) {
+          userStore.updateUserPresence(uid, online)
+        }
+        return
+      }
+
       const isUsersEvent = payload?.event === 'users:update'
         || payload?.event === 'users:list'
         || payload?.event === 'users:paginate:response'
 
       if (!isUsersEvent) return
 
-      const incoming = Array.isArray(payload.data)
-        ? payload.data
-        : Array.isArray(payload.data?.users)
-          ? payload.data.users
-          : []
+      const data = payload.data
+      const incoming = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data)
+          ? data
+          : Array.isArray(data?.users)
+            ? data.users
+            : []
 
-      userStore.setUsers(incoming)
+      if (incoming.length > 0) {
+        userStore.setUsers(incoming)
+      }
     } catch {
       // Ignore non-JSON websocket payloads.
     }
   }
 
   socket.addEventListener('message', socketMessageListener)
+}
+
+function setupRealtimeOnlineCount (): void {
+  attachSocketMessageListener()
   requestUsersViaSocket()
-  syncTimer = setInterval(requestUsersViaSocket, 15000)
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ws:user_presence', handlePresenceEvent)
+    window.addEventListener('ws:reconnected', handleReconnected)
+  }
+
+  if (!syncTimer) {
+    syncTimer = setInterval((): void => {
+      attachSocketMessageListener()
+      requestUsersViaSocket()
+    }, 15000)
+  }
 }
 
 function teardownRealtimeOnlineCount (): void {
-  const socket = $ws()
+  const socket = typeof $ws === 'function' ? $ws() : null
   if (socket && socketMessageListener) {
     socket.removeEventListener('message', socketMessageListener)
   }
@@ -167,6 +211,11 @@ function teardownRealtimeOnlineCount (): void {
   if (syncTimer) {
     clearInterval(syncTimer)
     syncTimer = null
+  }
+
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('ws:user_presence', handlePresenceEvent)
+    window.removeEventListener('ws:reconnected', handleReconnected)
   }
 }
 
@@ -198,8 +247,6 @@ const estimatedWaitTime = computed<string>((): string => {
 })
 
 // --- Match action ---
-const { $handleLoading } = useNuxtApp()
-
 async function onMatch (): Promise<void> {
   if (import.meta.client) {
     const { $wsConnect } = useNuxtApp() as any
