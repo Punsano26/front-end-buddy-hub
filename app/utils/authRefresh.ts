@@ -21,15 +21,18 @@ export function normalizeExpireAtMs (tokenExpiresIn: number, now: number): numbe
 
 export function shouldRefreshToken (): boolean {
   const authStore = useAuthStore()
-  const tokenExpiresIn = authStore.userToken.tokenExpiresIn
-
-  if (!tokenExpiresIn || tokenExpiresIn <= 0) return false
-
   const now = Date.now()
+
+  // Prefer absolute timestamp from server (fixes the always-5-min bug)
+  if (authStore.userToken.tokenExpireAt) {
+    return authStore.userToken.tokenExpireAt * 1000 - now <= REFRESH_BUFFER_MS
+  }
+
+  // Fallback to relative duration (legacy)
+  const tokenExpiresIn = authStore.userToken.tokenExpiresIn
+  if (!tokenExpiresIn || tokenExpiresIn <= 0) return false
   const expireAtMs = normalizeExpireAtMs(tokenExpiresIn, now)
-
   if (!expireAtMs) return false
-
   return expireAtMs - now <= REFRESH_BUFFER_MS
 }
 
@@ -49,6 +52,7 @@ export async function resetToken (): Promise<boolean> {
     authStore.userToken.accessToken = response.accessToken
     authStore.userToken.refreshToken = response.refreshToken
     authStore.userToken.tokenExpiresIn = response.tokenExpiresIn
+    authStore.userToken.tokenExpireAt = response.tokenExpireAt ?? null
 
     return true
   } catch (err: any) {

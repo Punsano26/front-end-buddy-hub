@@ -132,6 +132,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import ExtendSessionButton from '~/components/rent/ExtendSessionButton.vue'
 import SessionTimer from '~/components/rent/SessionTimer.vue'
@@ -142,12 +143,33 @@ import RentCustomerProvider from '~/resource/provider/RentCustomer.provider'
 import { useAuthStore } from '~/stores/Auth'
 import { useRentChatStore } from '~/stores/RentChat'
 
+const { $handleLoading } = useNuxtApp()
+
 const toast = useToast()
 const rentCustomerService: IRentCustomerProvider = new RentCustomerProvider()
 const authStore = useAuthStore()
 const store = useRentChatStore()
-const { $handleLoading } = useNuxtApp()
 const id = computed((): TBaseParamsId => store.item?.id)
+
+const handleUserPresence = (event: Event): void => {
+  const customEvent = event as CustomEvent<{ userId: number, isOnline: boolean }>
+  const detail = customEvent.detail
+  if (detail && store.partner && detail.userId === store.partner.id) {
+    store.updatePartnerPresence(detail.isOnline)
+  }
+}
+
+onMounted((): void => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ws:user_presence', handleUserPresence)
+  }
+})
+
+onUnmounted((): void => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('ws:user_presence', handleUserPresence)
+  }
+})
 
 const isRequester = computed((): boolean => {
   const reqId = store.item?.completionRequestedBy || store.requestCompleteBy || store.item?.requestCompleteBy || store.item?.requestCompletedBy

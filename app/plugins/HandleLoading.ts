@@ -3,9 +3,7 @@ import { useLoadingStore } from '@/stores/Loading'
 import type { TErrorResponse } from '@/models/response/Response.model'
 import type { ToastMessageOptions } from 'primevue/toast'
 import type { ToastServiceMethods } from 'primevue/toastservice'
-import AuthProvider, { type IAuthProvider } from '~/resource/provider/Auth.provider'
-
-let refreshTokenLock: Promise<boolean> | null = null
+import { forceRefreshToken } from '~/utils/authRefresh'
 
 interface IHandleToastOptions {
   instance: ToastServiceMethods
@@ -77,37 +75,6 @@ function isUnauthorizedError (error?: TErrorResponse): boolean {
   return code === 401 || unauthorizedMsgs.some((m: string): boolean => msg.includes(m))
 }
 
-async function refreshAccessToken (): Promise<boolean> {
-  if (refreshTokenLock) {
-    return await refreshTokenLock
-  }
-
-  refreshTokenLock = (async (): Promise<boolean> => {
-    const authStore = useAuthStore()
-    const refreshToken = authStore.userToken.refreshToken
-
-    if (!refreshToken) return false
-
-    const authService: IAuthProvider = new AuthProvider()
-
-    try {
-      const response = await authService.refreshToken({ refreshToken })
-
-      authStore.userToken.accessToken = response.accessToken
-      authStore.userToken.refreshToken = response.refreshToken
-      authStore.userToken.tokenExpiresIn = response.tokenExpiresIn
-
-      return true
-    } catch {
-      return false
-    } finally {
-      refreshTokenLock = null
-    }
-  })()
-
-  return await refreshTokenLock
-}
-
 function redirectToVerify (): void {
   const authStore = useAuthStore()
   authStore.logout()
@@ -123,7 +90,7 @@ function redirectToVerify (): void {
 async function authErrorCallback (error?: TErrorResponse): Promise<boolean> {
   if (!isUnauthorizedError(error)) return false
 
-  const isRefreshSuccess = await refreshAccessToken()
+  const isRefreshSuccess = await forceRefreshToken()
 
   if (!isRefreshSuccess) {
     redirectToVerify()

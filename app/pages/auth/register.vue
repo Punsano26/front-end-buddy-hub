@@ -149,7 +149,8 @@ async function onRegister (): Promise<void> {
     dateOfBirth: form.value.dateOfBirth
   }
   const response = await authService.register(payload)
-  authStore.userLogin(response.data, response.accessToken, response.refreshToken, Number(response.tokenExpiresIn))
+  const expireAt = response.tokenExpireAt ? Number(response.tokenExpireAt) : null
+  authStore.userLogin(response.data, response.accessToken, response.refreshToken, Number(response.tokenExpiresIn), expireAt)
 
   try {
     await policyService.recordConsent()

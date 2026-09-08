@@ -40,6 +40,8 @@ import { useRentChatStore } from '~/stores/RentChat'
 
 definePageMeta({ layout: 'chat-rent', title: 'แชท' })
 
+const { $handleLoading } = useNuxtApp()
+
 const route = useRoute()
 const id = computed((): number => Number(route.params.id))
 const userMessageText = ref('')
@@ -47,7 +49,6 @@ const toast = useToast()
 const authStore = useAuthStore()
 const store = useRentChatStore()
 const { pagination } = usePagination()
-const { $handleLoading } = useNuxtApp()
 const silentLoadingUnit = ref(false)
 const messagesListRef = ref<any>(null)
 
@@ -108,12 +109,49 @@ function showStickerAlert (): void {
   })
 }
 
+const handleReconnected = (): void => {
+  fetch()
+  fetchMessages()
+}
+
+const handleVisibility = (): void => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    fetchMessages()
+    void store.markSessionMessagesAsRead(id.value, authStore.user.id)
+  }
+}
+
+const handleUserPresence = (event: Event): void => {
+  const customEvent = event as CustomEvent<{ userId: number, isOnline: boolean }>
+  const detail = customEvent.detail
+  if (detail && store.partner && detail.userId === store.partner.id) {
+    store.updatePartnerPresence(detail.isOnline)
+  }
+}
+
 onMounted((): void => {
   fetch()
   fetchMessages()
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('ws:reconnected', handleReconnected)
+    window.addEventListener('focus', handleVisibility)
+    window.addEventListener('ws:user_presence', handleUserPresence)
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibility)
+  }
 })
 
 onBeforeUnmount((): void => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('ws:reconnected', handleReconnected)
+    window.removeEventListener('focus', handleVisibility)
+    window.removeEventListener('ws:user_presence', handleUserPresence)
+  }
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibility)
+  }
   store.clear()
 })
 
