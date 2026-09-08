@@ -37,6 +37,13 @@ export const useUserStore = defineStore('User', {
             lastOnlineAt: isOnline ? null : new Date().toISOString()
           }
         }
+      } else if (isOnline) {
+        this.users.push({
+          id: userId,
+          username: '',
+          isOnline: true,
+          lastOnlineAt: null
+        })
       }
       if (this.userDetails[userId]) {
         this.userDetails[userId] = {
