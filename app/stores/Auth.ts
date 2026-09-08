@@ -8,6 +8,7 @@ interface IToken {
   accessToken: string
   refreshToken: string
   tokenExpiresIn: number | null
+  tokenExpireAt: number | null
 }
 
 interface IResetToken {
@@ -19,7 +20,7 @@ interface IAuthStore {
   userToken: Ref<IToken>
   resetToken: Ref<IResetToken>
   isAdmin: ComputedRef<boolean>
-  userLogin(user: IUser, accessToken: string, refreshToken: string, tokenExpiresIn: number): void
+  userLogin(user: IUser, accessToken: string, refreshToken: string, tokenExpiresIn: number, tokenExpireAt?: number | null): void
   resetPassword(token: IResetToken): void
   updateUser (userValue: IUser): void
   logout (): void
@@ -37,19 +38,21 @@ export const useAuthStore = defineStore('Auth', (): IAuthStore => {
   const userToken = ref<IToken>({
     accessToken: '',
     refreshToken: '',
-    tokenExpiresIn: null
+    tokenExpiresIn: null,
+    tokenExpireAt: null
   })
 
   const resetPasswordToken = ref<IResetToken>({
     resetPasswordToken: ''
   })
 
-  function userLogin (userValue: IUser, accessToken: string, refreshToken: string, tokenExpiresIn: number): void {
+  function userLogin (userValue: IUser, accessToken: string, refreshToken: string, tokenExpiresIn: number, tokenExpireAt?: number | null): void {
     user.value = userValue
     userToken.value = {
       accessToken,
       refreshToken,
-      tokenExpiresIn
+      tokenExpiresIn,
+      tokenExpireAt: tokenExpireAt ?? (tokenExpiresIn ? Math.floor(Date.now() / 1000) + tokenExpiresIn : null)
     }
 
     if (import.meta.client) {
@@ -98,7 +101,8 @@ export const useAuthStore = defineStore('Auth', (): IAuthStore => {
     userToken.value = {
       accessToken: '',
       refreshToken: '',
-      tokenExpiresIn: null
+      tokenExpiresIn: null,
+      tokenExpireAt: null
     }
 
     resetPasswordToken.value = {

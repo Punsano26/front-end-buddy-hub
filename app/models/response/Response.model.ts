@@ -14,6 +14,7 @@ export interface IApiTokenResponse<TData> {
   accessToken: string
   refreshToken: string
   tokenExpiresIn: number | null
+  tokenExpireAt?: number | null
   data: TData
 }
 

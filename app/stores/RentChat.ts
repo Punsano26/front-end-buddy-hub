@@ -59,6 +59,7 @@ export interface IRentChatStore {
   setTyping: (value: boolean) => void
   startEditMessage: (message: { id: number, text: string }) => void
   cancelEditMessage: () => void
+  updatePartnerPresence: (isOnline: boolean) => void
   handleSocketMessage: (event: MessageEvent, sessionId: number, currentUserId: number) => void
 }
 
@@ -312,6 +313,20 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
     editingMessageId.value = null
   }
 
+  function updatePartnerPresence (isOnline: boolean): void {
+    if (!item.value) return
+    const authStore = useAuthStore()
+    if (authStore.user.id === item.value.customerId) {
+      if (item.value.provider) {
+        item.value.provider.isOnline = isOnline
+      }
+    } else {
+      if (item.value.customer) {
+        item.value.customer.isOnline = isOnline
+      }
+    }
+  }
+
   function handleSocketMessage (event: MessageEvent, sessionId: number, currentUserId: number): void {
     let payload: any
     try {
@@ -342,7 +357,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
 
     if (payload.event === 'service_new_message') {
       const data = payload.data
-      if (data && data.hireSessionId === sessionId) {
+      if (data && Number(data.hireSessionId) === Number(sessionId)) {
         if (!messages.value.some((m: IRentMessageItem): boolean => m.id === data.id)) {
           messages.value.push({
             id: data.id,
@@ -358,7 +373,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
       }
     } else if (payload.event === 'service_message_updated') {
       const data = payload.data
-      if (data && data.hireSessionId === sessionId) {
+      if (data && Number(data.hireSessionId) === Number(sessionId)) {
         messages.value = messages.value.map((m: IRentMessageItem): IRentMessageItem => {
           if (m.id === data.id) {
             return {
@@ -393,7 +408,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
       || payload.event === 'session_completing_expired'
     ) {
       const incomingSessionId = getSessionId(payload.data, payload)
-      if (incomingSessionId === sessionId) {
+      if (incomingSessionId !== null && Number(incomingSessionId) === Number(sessionId)) {
         if (payload.event === 'session_completing') {
           isCompleting.value = true
           const reqUserId = payload.data?.requestCompleteBy
@@ -443,6 +458,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
     setTyping,
     startEditMessage,
     cancelEditMessage,
+    updatePartnerPresence,
     handleSocketMessage
   }
 })

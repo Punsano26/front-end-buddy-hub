@@ -657,8 +657,17 @@ export default defineNuxtPlugin((): any => {
         case RentSessionsEvent.SESSION_COMPLETING:
         case RentSessionsEvent.SESSION_COMPLETING_EXPIRED: {
           const rentChatStore = useRentChatStore()
-          if (rentChatStore.item?.id) {
-            rentChatStore.handleSocketMessage(event, rentChatStore.item.id, currentUserId)
+          const sessionId = rentChatStore.item?.id
+            ?? (isRecord(payload.data)
+              ? (toNumber(payload.data.hireSessionId)
+                || toNumber(payload.data.hire_session_id)
+                || toNumber(payload.data.sessionId)
+                || toNumber(payload.data.id))
+              : null)
+          if (sessionId) {
+            rentChatStore.handleSocketMessage(event, sessionId, currentUserId)
+          } else {
+            console.warn('[WS] Rent session event with no session context:', payload.event)
           }
           if (payload.event === RentSessionsEvent.SERVICE_NEW_MESSAGE) {
             void playNotificationSound()
