@@ -16,6 +16,15 @@
       <span>เซสชันสิ้นสุดแล้ว</span>
     </div>
 
+    <!-- Not Started State (Waiting for first message) -->
+    <div
+      v-else-if="isNotStarted"
+      class="bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400 flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold shadow-sm transition-all duration-200">
+      <i class="pi pi-clock text-blue-500" />
+      <span>{{ formatTime(remainingSeconds) }}</span>
+      <span class="hidden sm:inline text-[10px] font-medium opacity-80">(รอเริ่มคุย)</span>
+    </div>
+
     <!-- Active States -->
     <template v-else>
       <!-- Main Timer -->
@@ -57,6 +66,7 @@ const {
   remainingSeconds,
   completingSeconds,
   isExpired,
+  isNotStarted,
   isWarning,
   hasError
 } = useSessionTimer(props.sessionId)
