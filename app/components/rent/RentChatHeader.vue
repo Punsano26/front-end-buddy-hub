@@ -49,6 +49,12 @@
               <span class="bg-amber-500 h-2 rounded-full w-2" />
               หมดเวลาแล้ว
             </p>
+            <p
+              v-else-if="isWaitingFirstMessage"
+              class="flex items-center gap-2 font-semibold mt-1 text-[11px] text-blue-500">
+              <span class="bg-blue-500 h-2 rounded-full w-2 animate-pulse" />
+              รอเริ่มการสนทนา (ส่งข้อความแรกเพื่อเริ่มนับเวลา)
+            </p>
           </div>
         </div>
 
@@ -169,6 +175,12 @@ onUnmounted((): void => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('ws:user_presence', handleUserPresence)
   }
+})
+
+const isWaitingFirstMessage = computed((): boolean => {
+  const status = store.item?.status
+  const isActive = status === RentStatusEnum.ACTIVE || status === RentStatusEnum.ACCEPTED
+  return isActive && !store.item?.startedAt && !store.item?.expiresAt
 })
 
 const isRequester = computed((): boolean => {

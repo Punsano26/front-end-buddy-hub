@@ -39,6 +39,7 @@ export interface IRentChatStore {
   isCompleting: Ref<boolean>
   requestCompleteBy: Ref<number | null>
   remainingSeconds: Ref<number>
+  isNotStarted: Ref<boolean>
   editingMessageId: Ref<number | null>
   activeMenuMessageId: Ref<number | null>
   isTyping: Ref<boolean>
@@ -72,7 +73,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
   const item = ref<IRentAPostData | undefined>(undefined)
   const isCompleting = ref<boolean>(false)
   const requestCompleteBy = ref<number | null>(null)
-  const { remainingSeconds, formattedTime, isExpired } = useHireTimer(item)
+  const { remainingSeconds, formattedTime, isExpired, isNotStarted } = useHireTimer(item)
   const editingMessageId = ref<number | null>(null)
   const activeMenuMessageId = ref<number | null>(null)
   const isTyping = ref<boolean>(false)
@@ -82,7 +83,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
 
   watch(
     (): boolean => isExpired.value, (val: boolean): void => {
-      if (val && item.value && item.value.status === RentStatusEnum.ACTIVE) {
+      if (val && item.value && item.value.status === RentStatusEnum.ACTIVE && item.value.expiresAt) {
         item.value.status = RentStatusEnum.EXPIRED
       }
     }
@@ -139,6 +140,9 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
     if (!currentPartner.value) return 'รออนุมัติ...'
     if (currentPartner.value.sessionStatus === 'pending') return 'รออนุมัติ...'
     if (currentPartner.value.sessionStatus === 'finished') return 'สิ้นสุดเซสชัน'
+    if (isNotStarted.value || (!item.value?.startedAt && !item.value?.expiresAt)) {
+      return `รอเริ่มสนทนา (${formattedTime.value})`
+    }
 
     return `นับถอยหลัง ${formattedTime.value}`
   })
@@ -438,6 +442,7 @@ export const useRentChatStore = defineStore('RentChat', (): IRentChatStore => {
     isCompleting,
     requestCompleteBy,
     remainingSeconds,
+    isNotStarted,
     editingMessageId,
     activeMenuMessageId,
     isTyping,

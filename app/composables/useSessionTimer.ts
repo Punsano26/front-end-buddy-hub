@@ -1,10 +1,13 @@
 import { ref, computed, onMounted, onBeforeUnmount, type Ref, type ComputedRef } from 'vue'
 import RentCustomerProvider from '~/resource/provider/RentCustomer.provider'
+import { RentStatusEnum } from '~/models/enums/Rent.enum'
+import { useRentChatStore } from '~/stores/RentChat'
 
 export interface IUseSessionTimer {
   remainingSeconds: Ref<number>
   completingSeconds: Ref<number>
   isExpired: Ref<boolean>
+  isNotStarted: Ref<boolean>
   isWarning: ComputedRef<boolean>
   hasError: Ref<boolean>
   syncWithServer: () => Promise<void>
@@ -14,6 +17,7 @@ interface ActiveTimer {
   remainingSeconds: Ref<number>
   completingSeconds: Ref<number>
   isExpired: Ref<boolean>
+  isNotStarted: Ref<boolean>
   hasError: Ref<boolean>
   timerInterval: any
   socketSyncInterval: any
@@ -42,12 +46,14 @@ export function useSessionTimer (sessionId: number): IUseSessionTimer {
     const remainingSeconds = useState<number>(`session-timer-remaining-${sessionId}`, (): number => 0)
     const completingSeconds = useState<number>(`session-timer-completing-${sessionId}`, (): number => 0)
     const isExpired = useState<boolean>(`session-timer-expired-${sessionId}`, (): boolean => false)
+    const isNotStarted = useState<boolean>(`session-timer-not-started-${sessionId}`, (): boolean => false)
     const hasError = ref<boolean>(false)
 
     timerState = {
       remainingSeconds,
       completingSeconds,
       isExpired,
+      isNotStarted,
       hasError,
       timerInterval: null,
       socketSyncInterval: null,
@@ -62,14 +68,36 @@ export function useSessionTimer (sessionId: number): IUseSessionTimer {
     try {
       const response = await rentProvider.findRealtimeSessionMessages(sessionId)
       if (response?.data) {
-        timerState.remainingSeconds.value = response.data.sessionRemainingSeconds ?? 0
-        timerState.completingSeconds.value = response.data.completingRemainingSeconds ?? 0
-        timerState.isExpired.value = timerState.remainingSeconds.value <= 0
+        const rentChatStore = useRentChatStore()
+        const sessionData = response.data
+        const expiresAt = sessionData.sessionExpiresAt
+        const remainingSec = sessionData.sessionRemainingSeconds ?? 0
+        const completingSec = sessionData.completingRemainingSeconds ?? 0
+
+        timerState.completingSeconds.value = completingSec
+
+        const sessionItem = rentChatStore.item?.id === sessionId ? rentChatStore.item : null
+        const hasStarted = !!expiresAt || !!sessionItem?.startedAt || !!sessionItem?.expiresAt
+        const isFinished = sessionItem?.status === RentStatusEnum.COMPLETED
+          || sessionItem?.status === RentStatusEnum.CANCELLED
+          || sessionItem?.status === RentStatusEnum.REJECTED
+          || sessionItem?.status === RentStatusEnum.EXPIRED
+
+        if (!hasStarted && !isFinished) {
+          const defaultDurationSec = (sessionItem?.durationMinutes ?? 0) * 60
+          timerState.remainingSeconds.value = remainingSec > 0 ? remainingSec : defaultDurationSec
+          timerState.isNotStarted.value = true
+          timerState.isExpired.value = false
+        } else {
+          timerState.isNotStarted.value = false
+          timerState.remainingSeconds.value = remainingSec
+          timerState.isExpired.value = remainingSec <= 0
+        }
         timerState.hasError.value = false
       } else {
         timerState.hasError.value = true
       }
-    } catch (error) {
+    } catch (error: any) {
       timerState.hasError.value = true
       console.error('Failed to sync session timer with server:', error)
     }
@@ -77,6 +105,9 @@ export function useSessionTimer (sessionId: number): IUseSessionTimer {
 
   function startCountdown (): void {
     stopCountdown()
+    if (timerState.isNotStarted.value) {
+      return
+    }
     timerState.timerInterval = setInterval((): void => {
       if (timerState.remainingSeconds.value > 0) {
         timerState.remainingSeconds.value--
@@ -147,12 +178,16 @@ export function useSessionTimer (sessionId: number): IUseSessionTimer {
             if (typeof data.sessionRemainingSeconds === 'number') {
               timerState.remainingSeconds.value = data.sessionRemainingSeconds
             }
-            timerState.isExpired.value = timerState.remainingSeconds.value <= 0
+            if (data.sessionExpiresAt) {
+              timerState.isNotStarted.value = false
+              timerState.isExpired.value = timerState.remainingSeconds.value <= 0
+            }
           }
           break
         }
         case 'session_started': {
           if (data) {
+            timerState.isNotStarted.value = false
             if (typeof data.sessionRemainingSeconds === 'number') {
               timerState.remainingSeconds.value = data.sessionRemainingSeconds
             } else if (data.expiresAt) {
@@ -230,6 +265,7 @@ export function useSessionTimer (sessionId: number): IUseSessionTimer {
     remainingSeconds: timerState.remainingSeconds,
     completingSeconds: timerState.completingSeconds,
     isExpired: timerState.isExpired,
+    isNotStarted: timerState.isNotStarted,
     isWarning,
     hasError: timerState.hasError,
     syncWithServer
